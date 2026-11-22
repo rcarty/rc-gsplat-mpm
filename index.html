@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Gaussian splats with MPM physics — Ryan Carty</title>
+    <meta
+      name="description"
+      content="Gaussian splats simulated with the material point method in WebGPU. Load your own .ply."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d0e11'/%3E%3Cg fill='%237cc4ff'%3E%3Ccircle cx='13' cy='18.5' r='6.2'/%3E%3Ccircle cx='22.5' cy='11' r='4' fill-opacity='.75'/%3E%3Ccircle cx='23' cy='22' r='2.8' fill-opacity='.6'/%3E%3Ccircle cx='9' cy='8.5' r='2.2' fill-opacity='.5'/%3E%3Ccircle cx='16.5' cy='6.5' r='1.4' fill-opacity='.4'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="kit/demo/demo.css" />
+    <style>
+      :root {
+        --wrap: 1180px;
+      }
+      .stage {
+        position: relative;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background: var(--bg);
+      }
+      #view {
+        display: block;
+        width: 100%;
+        height: min(72vh, 720px);
+        min-height: 380px;
+        touch-action: none;
+        cursor: grab;
+      }
+      #view:active {
+        cursor: grabbing;
+      }
+      .hint {
+        position: absolute;
+        left: 16px;
+        bottom: 12px;
+        font-size: 12px;
+        color: var(--dim);
+        pointer-events: none;
+      }
+      .controls {
+        margin-top: 16px;
+      }
+      .file input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+      }
+      .file:focus-within {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <div class="inner">
+        <a class="name" href="../index.html">Ryan Carty</a>
+        <nav aria-label="Main">
+          <a href="../index.html#work">Work</a
+          ><a href="../index.html#projects" aria-current="true">Projects</a
+          ><a href="../index.html#writing">Writing</a><a href="../index.html#contact">Contact</a
+          ><a href="https://github.com/rcarty">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <div class="wrap">
+      <section class="lead">
+        <h1>Gaussian splats with MPM physics</h1>
+        <p>
+          A Gaussian splat object simulated with the material point method, running on your GPU in
+          this page. Pick a material and the object drops onto the floor. Drag to orbit, and click
+          or tap to poke it. You can also load your own 3DGS .ply file.
+        </p>
+        <p class="nogpu">
+          This browser doesn't support WebGPU, so the demo can't run here. Recent Chrome, Edge,
+          Safari and Firefox all support it.
+        </p>
+      </section>
+
+      <div class="stage">
+        <canvas id="view" aria-label="3D view of a Gaussian splat object being simulated"></canvas>
+        <div class="hint mono">Drag to orbit · scroll to zoom · click to poke</div>
+      </div>
+
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Material">
+          <button type="button" data-mat="0" aria-pressed="true">Jelly</button>
+          <button type="button" data-mat="1" aria-pressed="false">Sand</button>
+          <button type="button" data-mat="2" aria-pressed="false">Snow</button>
+          <button type="button" data-mat="3" aria-pressed="false">Liquid</button>
+        </div>
+        <button type="button" class="btn" id="drop">Drop again</button>
+        <label class="btn file">Load a .ply<input type="file" id="ply" accept=".ply" /></label>
+        <button type="button" class="btn" id="knot" hidden>Back to the knot</button>
+      </div>
+      <div class="status mono" id="status" role="status"></div>
+
+      <section class="notes">
+        <div>
+          <h3>Simulation</h3>
+          <p>
+            Every splat is an MLS-MPM particle on a 64³ grid, with APIC transfers and fixed-point
+            atomic scatter, like the fluid on the home page. Jelly uses fixed-corotated elasticity.
+            Sand uses Drucker-Prager plasticity, snow uses the Stomakhin hardening model, and liquid
+            keeps only the volume change. Each particle carries a deformation gradient F, and a 3×3
+            SVD built on Jacobi eigen-iterations runs in WGSL every substep.
+          </p>
+          <p>
+            Trained splats only cover the surface, so the object is voxelised and the inside is
+            filled with small round splats coloured from the nearest surface splat. A voxel counts
+            as inside when it can see the surface in at least five of the six axis directions, which
+            copes with the holes and missing underside of a real scan. Without them, an object made
+            of surface splats would collapse like a paper shell, and sand or liquid would show a
+            hollow inside.
+          </p>
+        </div>
+        <div>
+          <h3>Deforming the splats</h3>
+          <p>
+            Each splat's 3D covariance moves with the material: Σ = F Σ₀ Fᵀ, the approach from
+            PhysGaussian (Xie et al., CVPR 2024). A splat stretches, squashes and rotates with the
+            material around it. Sand and snow keep only the elastic part of F, so grains slide past
+            each other without smearing.
+          </p>
+        </div>
+        <div>
+          <h3>Rendering</h3>
+          <p>
+            A compute pass projects each 3D covariance to a screen-space ellipse (EWA splatting).
+            Splats are depth-sorted back to front every frame with the key-value radix sort from the
+            <a href="../rc-gpu-sort/index.html">sorting demo</a>, on 16-bit keys in four passes,
+            then drawn as alpha-blended quads.
+          </p>
+          <p>
+            Colour uses spherical-harmonic degree 0 only. Files over the splat limit are sampled
+            down, favouring large opaque splats and growing the ones that are kept so the surface
+            stays covered.
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="src/main.js"></script>
+    <script
+      data-goatcounter="https://rcarty.goatcounter.com/count"
+      async
+      src="https://gc.zgo.at/count.js"
+    ></script>
+  </body>
+</html>
